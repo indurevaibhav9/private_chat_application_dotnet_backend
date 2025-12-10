@@ -1,0 +1,6 @@
+@private_chat_application_dotnet_backend_HostAddress = http://localhost:5154
+
+GET {{private_chat_application_dotnet_backend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
