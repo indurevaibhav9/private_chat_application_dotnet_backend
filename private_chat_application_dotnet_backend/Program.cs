@@ -34,6 +34,11 @@ builder.Services.Configure<CloudinarySettings>(options =>
     options.ApiSecret = Environment.GetEnvironmentVariable("CLOUDINARY_API_SECRET");
 });
 
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ListenAnyIP(int.Parse(Environment.GetEnvironmentVariable("PORT") ?? "5000"));
+});
+
 // =========================
 // MongoDB DI
 // =========================
@@ -124,6 +129,12 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+
+app.UseCors(x => x
+    .AllowAnyOrigin()
+    .AllowAnyMethod()
+    .AllowAnyHeader());
 
 app.UseSwagger();
 app.UseSwaggerUI();
