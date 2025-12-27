@@ -1,3 +1,4 @@
+﻿using DotNetEnv;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
@@ -6,21 +7,51 @@ using private_chat_application_dotnet_backend.Infrastructure;
 using private_chat_application_dotnet_backend.Services;
 using System.Text;
 
+Env.Load(); // 👈 load .env file
+
 var builder = WebApplication.CreateBuilder(args);
 
-var mongoConfig = builder.Configuration.GetSection("MongoDb");
-var jwtConfig = builder.Configuration.GetSection("JWT");
-var cloudinaryConfig = builder.Configuration.GetSection("Cloudinary");
+// =========================
+// MongoDB Settings
+// =========================
+var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_CONNECTION_STRING");
+var mongoDatabase = Environment.GetEnvironmentVariable("MONGODB_DATABASE");
 
-// DI Config
-builder.Services.Configure<MongoDbSettings>(mongoConfig);
-builder.Services.Configure<JwtSettings>(jwtConfig);
-builder.Services.Configure<CloudinarySettings>(cloudinaryConfig);
+// =========================
+// JWT Settings
+// =========================
+var jwtKey = Environment.GetEnvironmentVariable("JWT_KEY");
+var jwtIssuer = Environment.GetEnvironmentVariable("JWT_ISSUER");
+var jwtAudience = Environment.GetEnvironmentVariable("JWT_AUDIENCE");
 
-builder.Services.AddSingleton(sp =>
-    new MongoClient(mongoConfig.GetValue<string>("ConnectionString"))
+// =========================
+// Cloudinary Settings
+// =========================
+builder.Services.Configure<CloudinarySettings>(options =>
+{
+    options.CloudName = Environment.GetEnvironmentVariable("CLOUDINARY_CLOUD_NAME");
+    options.ApiKey = Environment.GetEnvironmentVariable("CLOUDINARY_API_KEY");
+    options.ApiSecret = Environment.GetEnvironmentVariable("CLOUDINARY_API_SECRET");
+});
+
+// =========================
+// MongoDB DI
+// =========================
+builder.Services.AddSingleton<IMongoClient>(_ =>
+    new MongoClient(mongoConnectionString)
 );
 
+builder.Services.Configure<MongoDbSettings>(options =>
+{
+    options.ConnectionString = mongoConnectionString;
+    options.DatabaseName = mongoDatabase;
+    options.UserCollection = Environment.GetEnvironmentVariable("MONGODB_USER_COLLECTION");
+    options.OtpCollection = Environment.GetEnvironmentVariable("MONGODB_OTP_COLLECTION");
+});
+
+// =========================
+// Services
+// =========================
 builder.Services.AddScoped<UserRepository>();
 builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
 
@@ -29,9 +60,13 @@ builder.Services.AddSingleton<OtpService>();
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddScoped<ChatService>();
 
-// JWT Auth (single valid block)
-var key = Encoding.UTF8.GetBytes(jwtConfig["Key"]);
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+// =========================
+// JWT Authentication
+// =========================
+var keyBytes = Encoding.UTF8.GetBytes(jwtKey);
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.RequireHttpsMetadata = false;
@@ -42,13 +77,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtConfig["Issuer"],
-            ValidAudience = jwtConfig["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(key),
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(keyBytes),
             ClockSkew = TimeSpan.Zero
         };
 
-        // allow token via query string for SignalR
+        // SignalR JWT via query string
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -59,24 +94,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 {
                     context.Token = accessToken;
                 }
-
                 return Task.CompletedTask;
             }
         };
     });
-builder.Services.AddSingleton(sp =>
-{
-    var settings = MongoClientSettings.FromConnectionString(
-        builder.Configuration["MongoDB:ConnectionString"]);
-
-    settings.Credential = MongoCredential.CreatePlainCredential(
-        builder.Configuration["MongoDB:Database"],
-        "indurevaibhav9",
-        "Vaibhav18"
-    );
-
-    return new MongoClient(settings);
-});
 
 builder.Services.AddAuthorization();
 builder.Services.AddSignalR();
@@ -84,19 +105,9 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Allow CORS (required for frontend like React/Angular)
-//builder.Services.AddCors(options =>
-//{
-//    options.AddPolicy("FrontendPolicy", policy =>
-//    {
-//        policy
-//            .WithOrigins("http://localhost:5173") // add your frontend URLs here
-//            .AllowAnyHeader()
-//            .AllowAnyMethod()
-//            .AllowCredentials();
-//    });
-//});
-
+// =========================
+// CORS
+// =========================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -112,22 +123,18 @@ builder.Services.AddCors(options =>
     });
 });
 
-
-
 var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
 
 app.UseRouting();
-app.UseCors(policy =>
-    policy.AllowAnyHeader().AllowAnyMethod().AllowCredentials().SetIsOriginAllowed(_ => true)
-);
 app.UseCors("AllowAll");
+
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<ChatHub>("chatHub");
+app.MapHub<ChatHub>("/hubs/chat");
 
 app.Run();
